@@ -6,14 +6,16 @@ on:
     paths-ignore:
       - "*.md"
     branches:
-      - "**"
+      - main
+      - master
     tags:
       - "**"
   pull_request:
     paths-ignore:
       - "*.md"
     branches:
-      - "**"
+      - main
+      - master
 
 env:
   CARGO_TERM_COLOR: always
