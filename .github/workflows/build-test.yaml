@@ -1,0 +1,33 @@
+name: Build & Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - "*.md"
+    tags:
+      - "**"
+  pull_request:
+    paths-ignore:
+      - "*.md"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        features: [rust-tls, native-tls]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --features ${{ matrix.features }}
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --features ${{ matrix.features }}
