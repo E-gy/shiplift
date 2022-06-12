@@ -55,7 +55,7 @@ tokio = { version = "^1.19", features = ["macros", "rt-multi-thread"] }
 
 [features]
 rust-tls = ["dep:rustls", "dep:hyper-rustls"]
-native-tls = ["dep:native-tls"]
+native-tls = ["dep:native-tls", "dep:hyper-tls"]
 # native-tls-vendored = ["native-tls", "dep:native-tls/vendored"]
 # native-tls-alpn = ["native-tls", "dep:native-tls/alpn"]
 
