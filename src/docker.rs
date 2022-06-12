@@ -111,20 +111,7 @@ impl Docker {
     /// constructs a new Docker instance for a docker host listening at a url specified by an env var `DOCKER_HOST`,
     /// falling back on unix:///var/run/docker.sock
     pub fn new() -> Docker {
-        match env::var("DOCKER_HOST").ok() {
-            Some(host) => {
-                #[cfg(feature = "unix-socket")]
-                if let Some(path) = host.strip_prefix("unix://") {
-                    return Docker::unix(path);
-                }
-                let host = host.parse().expect("invalid url");
-                Docker::host(host)
-            }
-            #[cfg(feature = "unix-socket")]
-            None => Docker::unix("/var/run/docker.sock"),
-            #[cfg(not(feature = "unix-socket"))]
-            None => panic!("Unix socket support is disabled"),
-        }
+        Self::host(env::var("DOCKER_HOST").ok().as_ref().map(String::as_str).unwrap_or("unix:///var/run/docker.sock").parse().expect("invalid url"))
     }
 
     /// Creates a new docker instance for a docker host
@@ -149,7 +136,7 @@ impl Docker {
         let tcp_host_str = format!(
             "{}://{}:{}",
             host.scheme_str().unwrap(),
-            host.host().unwrap().to_owned(),
+            host.host().unwrap(),
             host.port_u16().unwrap_or(80)
         );
 
