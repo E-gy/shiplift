@@ -30,15 +30,15 @@ jobs:
       - uses: actions/checkout@v1
       - run: cargo fmt --all -- --check
 
-  # lint:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Set up Rust
-  #       uses: hecrj/setup-rust-action@v1
-  #       with:
-  #         components: clippy
-  #     - uses: actions/checkout@v1
-  #     - run: cargo clippy --all-targets -- -D clippy::all
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Rust
+        uses: hecrj/setup-rust-action@v1
+        with:
+          components: clippy
+      - uses: actions/checkout@v1
+      - run: cargo clippy --all-targets -- -D clippy::all
 
   compile:
     runs-on: ubuntu-latest
