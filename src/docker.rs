@@ -54,27 +54,27 @@ fn get_http_connector() -> HttpConnector {
     http
 }
 
+/*
+async fn read_to_bytes(f: &str) -> tokio::io::Result<Vec<u8>> {
+    let mut f = tokio::fs::File::open(f).await?;
+    let mut buffer = Vec::new();
+    f.read_to_end(&mut buffer).await?;
+    Ok(buffer)
+}
+*/
+fn read_to_bytes(f: &str) -> std::io::Result<Vec<u8>> {
+    let mut f = std::fs::File::open(f)?;
+    let mut buffer = Vec::new();
+    f.read_to_end(&mut buffer)?;
+    Ok(buffer)
+}
+
 #[cfg(feature = "rust-tls")]
 fn get_https_connector(docker_cert_path: &str) -> HttpsConnector<HttpConnector> {
     use hyper_rustls::HttpsConnectorBuilder;
     use rustls::{ClientConfig, RootCertStore, Certificate, PrivateKey};
     use rustls_pemfile::{Item, read_one, read_all};
 
-    /*
-    async fn read_to_bytes(f: &str) -> tokio::io::Result<Vec<u8>> {
-        let mut f = tokio::fs::File::open(f).await?;
-        let mut buffer = Vec::new();
-        f.read_to_end(&mut buffer).await?;
-        Ok(buffer)
-    }
-    */
-
-    fn read_to_bytes(f: &str) -> std::io::Result<Vec<u8>> {
-        let mut f = std::fs::File::open(f)?;
-        let mut buffer = Vec::new();
-        f.read_to_end(&mut buffer)?;
-        Ok(buffer)
-    }
     fn read_certs(f: &str) -> std::io::Result<Vec<Certificate>> {
         Ok(read_all(&mut std::io::BufReader::new(std::fs::File::open(f)?))?.into_iter().filter_map(|item| match item {
             Item::X509Certificate(x509) => Some(Certificate(x509)),
@@ -111,6 +111,23 @@ fn get_https_connector(docker_cert_path: &str) -> HttpsConnector<HttpConnector> 
         .wrap_connector(get_http_connector())
 }
 
+#[cfg(feature = "native-tls")]
+fn get_https_connector(docker_cert_path: &str) -> HttpsConnector<HttpConnector> {
+    use hyper_tls::native_tls::{ TlsConnector, Certificate };
+    use native_tls::Identity;
+
+    let mut builder = TlsConnector::builder();
+    if env::var("DOCKER_TLS_VERIFY").is_ok() {
+        let bytes = read_to_bytes(&format!("{}/ca.pem", docker_cert_path)).unwrap();
+        builder.add_root_certificate(Certificate::from_der(&bytes).or_else(|_| Certificate::from_pem(&bytes)).unwrap()); //FIXME handle errors do not panik
+    }
+    builder.identity(Identity::from_pkcs8(&read_to_bytes(&format!("{}/cert.pem", docker_cert_path)).unwrap(),&read_to_bytes(&format!("{}/key.pem", docker_cert_path)).unwrap()).unwrap()); //FIXME handle errors do not panik
+    (
+        get_http_connector(),
+        builder.build().unwrap().into(), //FIXME handle errors do not panik
+    ).into()
+}
+
 /// Constructs Docker for HTTP-only TCP connection
 fn get_docker_for_tcp_http(tcp_host_str: String) -> Docker {
     Docker {
@@ -122,8 +139,8 @@ fn get_docker_for_tcp_http(tcp_host_str: String) -> Docker {
 }
 
 /// Constructs Docker for HTTPS TCP connection
-#[cfg(feature = "rust-tls")]
-fn get_docker_for_tcp_https(tcp_host_str: String, docker_cert_path: &String) -> Docker {
+#[cfg(any(feature = "rust-tls", feature = "native-tls"))]
+fn get_docker_for_tcp_https(tcp_host_str: String, docker_cert_path: &str) -> Docker {
     Docker {
         transport: Transport::EncryptedTcp {
             client: Client::builder().build(get_https_connector(docker_cert_path)),
@@ -132,64 +149,16 @@ fn get_docker_for_tcp_https(tcp_host_str: String, docker_cert_path: &String) -> 
     }
 }
 
-#[cfg(not(any(feature = "rust-tls")))]
+#[cfg(not(any(feature = "rust-tls", feature = "native-tls")))]
 fn get_docker_for_tcp(tcp_host_str: String) -> Docker {
     get_docker_for_tcp_http(tcp_host_str)
 }
 
-#[cfg(any(feature = "rust-tls"))]
+#[cfg(any(feature = "rust-tls", feature = "native-tls"))]
 fn get_docker_for_tcp(tcp_host_str: String) -> Docker {
     match &env::var("DOCKER_CERT_PATH") {
         Ok(certs) => get_docker_for_tcp_https(tcp_host_str, &certs),
         _ => get_docker_for_tcp_http(tcp_host_str),
-    }
-}
-
-#[cfg(feature = "tls")]
-fn get_docker_for_tcp(tcp_host_str: String) -> Docker {
-    let http = get_http_connector();
-    if let Ok(ref certs) = env::var("DOCKER_CERT_PATH") {
-        // fixme: don't unwrap before you know what's in the box
-        // https://github.com/hyperium/hyper/blob/master/src/net.rs#L427-L428
-        let mut connector = SslConnector::builder(SslMethod::tls()).unwrap();
-        connector.set_cipher_list("DEFAULT").unwrap();
-        let cert = &format!("{}/cert.pem", certs);
-        let key = &format!("{}/key.pem", certs);
-        connector
-            .set_certificate_file(&Path::new(cert), SslFiletype::PEM)
-            .unwrap();
-        connector
-            .set_private_key_file(&Path::new(key), SslFiletype::PEM)
-            .unwrap();
-        if env::var("DOCKER_TLS_VERIFY").is_ok() {
-            let ca = &format!("{}/ca.pem", certs);
-            connector.set_ca_file(&Path::new(ca)).unwrap();
-        }
-
-        // If we are attempting to connec to the docker daemon via tcp
-        // we need to convert the scheme to `https` to let hyper connect.
-        // Otherwise, hyper will reject the connection since it does not
-        // recongnize `tcp` as a valid `http` scheme.
-        let tcp_host_str = if tcp_host_str.contains("tcp://") {
-            tcp_host_str.replace("tcp://", "https://")
-        } else {
-            tcp_host_str
-        };
-
-        Docker {
-            transport: Transport::EncryptedTcp {
-                client: Client::builder()
-                    .build(HttpsConnector::with_connector(http, connector).unwrap()),
-                host: tcp_host_str,
-            },
-        }
-    } else {
-        Docker {
-            transport: Transport::Tcp {
-                client: Client::builder().build(http),
-                host: tcp_host_str,
-            },
-        }
     }
 }
 
