@@ -11,7 +11,7 @@ on:
     paths-ignore:
       - "*.md"
 
-matrix:
+jobs:
   build:
     strategy:
       matrix:
