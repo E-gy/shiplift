@@ -10,6 +10,8 @@ use mime::Mime;
 use serde::{de, Deserialize, Serialize};
 use url::form_urlencoded;
 
+use std::io::Read;
+
 use crate::{
     container::Containers,
     errors::{Error, Result},
@@ -25,6 +27,11 @@ use crate::{
 use crate::datetime::{datetime_from_nano_timestamp, datetime_from_unix_timestamp};
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
+
+#[cfg(feature = "rust-tls")]
+use hyper_rustls::HttpsConnector;
+#[cfg(feature = "native-tls")]
+use hyper_tls::HttpsConnector;
 
 #[cfg(feature = "tls")]
 use hyper_openssl::HttpsConnector;
@@ -45,6 +52,97 @@ fn get_http_connector() -> HttpConnector {
     http.enforce_http(false);
 
     http
+}
+
+#[cfg(feature = "rust-tls")]
+fn get_https_connector(docker_cert_path: &str) -> HttpsConnector<HttpConnector> {
+    use hyper_rustls::HttpsConnectorBuilder;
+    use rustls::{ClientConfig, RootCertStore, Certificate, PrivateKey};
+    use rustls_pemfile::{Item, read_one, read_all};
+
+    /*
+    async fn read_to_bytes(f: &str) -> tokio::io::Result<Vec<u8>> {
+        let mut f = tokio::fs::File::open(f).await?;
+        let mut buffer = Vec::new();
+        f.read_to_end(&mut buffer).await?;
+        Ok(buffer)
+    }
+    */
+
+    fn read_to_bytes(f: &str) -> std::io::Result<Vec<u8>> {
+        let mut f = std::fs::File::open(f)?;
+        let mut buffer = Vec::new();
+        f.read_to_end(&mut buffer)?;
+        Ok(buffer)
+    }
+    fn read_certs(f: &str) -> std::io::Result<Vec<Certificate>> {
+        Ok(read_all(&mut std::io::BufReader::new(std::fs::File::open(f)?))?.into_iter().filter_map(|item| match item {
+            Item::X509Certificate(x509) => Some(Certificate(x509)),
+            _ => None,
+        }).collect())
+    }
+    fn read_key(f: &str) -> std::io::Result<PrivateKey> {
+        Ok(match read_one(&mut std::io::BufReader::new(std::fs::File::open(f)?))? {
+            Some(Item::RSAKey(bytes)) | Some(Item::PKCS8Key(bytes)) => PrivateKey(bytes),
+            // Some(Item::ECKey(_)) => Err(io::Error::other("EC keys not supported, i think, :("))?,
+            // _ => Err(io::Error::other("Not a private key"))?,
+            _ => panic!("Not a private key"), //FIXME Bad panic bad!
+        })
+    }
+
+    HttpsConnectorBuilder::new()
+        .with_tls_config(ClientConfig::builder()
+            .with_safe_default_cipher_suites()
+            .with_safe_default_kx_groups()
+            .with_safe_default_protocol_versions()
+            .unwrap() //FIXME handle errors do not panik
+            .with_root_certificates({
+                let mut store = RootCertStore::empty();
+                if env::var("DOCKER_TLS_VERIFY").is_ok() {
+                    store.add_parsable_certificates(&[read_to_bytes(&format!("{}/ca.pem", docker_cert_path)).unwrap()]); //FIXME handle errors do not panik
+                }
+                store
+            })
+            .with_single_cert(read_certs(&format!("{}/cert.pem", docker_cert_path)).unwrap(), read_key(&format!("{}/key.pem", docker_cert_path)).unwrap()) //FIXME handle errors do not panik
+            .unwrap() //FIXME handle errors do not panik
+        )
+        .https_only()
+        .enable_http1()
+        .wrap_connector(get_http_connector())
+}
+
+/// Constructs Docker for HTTP-only TCP connection
+fn get_docker_for_tcp_http(tcp_host_str: String) -> Docker {
+    Docker {
+        transport: Transport::Tcp {
+            client: Client::builder().build(get_http_connector()),
+            host: tcp_host_str,
+        },
+    }
+}
+
+/// Constructs Docker for HTTPS TCP connection
+#[cfg(feature = "rust-tls")]
+fn get_docker_for_tcp_https(tcp_host_str: String, docker_cert_path: &String) -> Docker {
+    Docker {
+        transport: Transport::EncryptedTcp {
+            client: Client::builder().build(get_https_connector(docker_cert_path)),
+            host: tcp_host_str,
+        },
+    }
+}
+
+#[cfg(not(any(feature = "rust-tls")))]
+fn get_docker_for_tcp(tcp_host_str: String) -> Docker {
+    get_docker_for_tcp_http(tcp_host_str)
+}
+
+#[cfg(any(feature = "rust-tls"))]
+fn get_docker_for_tcp(tcp_host_str: String) -> Docker {
+    match &env::var("DOCKER_CERT_PATH") {
+        Ok(certs) => get_docker_for_tcp_https(tcp_host_str, &certs),
+        _ => get_docker_for_tcp_http(tcp_host_str),
+    }
 }
 
 #[cfg(feature = "tls")]
@@ -92,17 +190,6 @@ fn get_docker_for_tcp(tcp_host_str: String) -> Docker {
                 host: tcp_host_str,
             },
         }
-    }
-}
-
-#[cfg(not(feature = "tls"))]
-fn get_docker_for_tcp(tcp_host_str: String) -> Docker {
-    let http = get_http_connector();
-    Docker {
-        transport: Transport::Tcp {
-            client: Client::builder().build(http),
-            host: tcp_host_str,
-        },
     }
 }
 
