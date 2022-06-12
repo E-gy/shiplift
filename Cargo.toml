@@ -40,6 +40,7 @@ native-tls = { version = "^0.2", optional = true }
 hyper-tls = { version = "^0.5", optional = true }
 # Rust TLS
 rustls = { version = "^0.20", optional = true }
+rustls-pemfile = "^1.0"
 hyper-rustls = { version = "^0.23", optional = true }
 
 # XXX: This is a temporary dependency for the reexport! macro in lib.rs. Remove
