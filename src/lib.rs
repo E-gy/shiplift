@@ -56,6 +56,8 @@ pub use crate::{
     volume::{Volume, VolumeCreateOptions, Volumes},
 };
 
+pub use futures_util;
+
 macro_rules! reexport {
     (@alias $module:ident :: $item:ident) => {
         reexport!(@alias $module::$item as $item);
